@@ -49,27 +49,6 @@ DYNAMIC-VAR bound to STATIC-VAR."
      ,@body))
 (put 'cps--with-dynamic-binding 'lisp-indent-function 2)
 
-(defun cps--make-unwind-wrapper (unwind-forms)
-  (assert lexical-binding)
-  (lambda (form)
-    (let ((normal-exit-symbol
-           (gensym "cps-normal-exit-from-unwind")))
-      `(let (,normal-exit-symbol)
-         (unwind-protect
-             (prog1
-                 ,form
-               (setf ,normal-exit-symbol t))
-           (unless ,normal-exit-symbol
-             ,unwind-forms))))))
-
-(defmacro cps--with-unwind-forms (unwind-forms &rest body)
-  "Evaluate BODY such that generated atomic evaluations run
-UNWIND-FORMS on non-local exit."
-  `(cps--with-value-wrapper
-       (cps--make-unwind-wrapper ,unwind-forms)
-     ,@body))
-(put 'cps--with-unwind-forms 'lisp-indent-function 1)
-
 (defun cps--add-state (kind body)
   "Create a new CPS state with body BODY and return the state's name."
   (let ((state (gensym (format "cps-state-%s-" kind))))
@@ -154,8 +133,40 @@ UNWIND-FORMS on non-local exit."
                    ,(cps--transform-1 `(and ,@(cdr form)) next-state)
                  ,next-state)))))))
 
-(cps--define-unsupported catch) ; XXX
-(cps--define-unsupported throw)
+(defun cps--make-catch-wrapper (tag-binding next-state)
+  (lambda (form)
+    (let ((normal-exit-symbol
+           (gensym "cps-normal-exit-from-catch-")))
+      `(let (,normal-exit-symbol)
+         (prog1
+             (catch ,tag-binding
+               (prog1
+                   ,form
+                 (setf ,normal-exit-symbol t)))
+           (unless ,normal-exit-symbol
+             (setf ,*cps-state-symbol* ,next-state)))))))
+
+(defun cps--transform-catch (form next-state)
+  ;; Eval the first form to get the tag, then process body with a
+  ;; wrapper that catches the tag for us.  Although all lisp code in
+  ;; the Emacs tree uses constant, quoted tags for `catch', we still
+  ;; need to support dynamically-computed tags for completeness' sake.
+
+  (let ((tag-binding (cps--add-binding "catch-tag")))
+    (cps--transform-1
+     (car form)
+     (cps--add-state "catch-updater"
+       `(setf ,tag-binding
+              ,*cps-value-symbol*
+              ,*cps-state-symbol*
+              ,(cps--with-value-wrapper
+                   (cps--make-catch-wrapper tag-binding next-state)
+                 (cps--transform-1
+                  `(progn ,@(cdr form))
+                  next-state)))))))
+
+(defun cps--transform-throw (form next-state)
+  (cps--transform-application `(throw ,@form) next-state))
 
 (defun cps--transform-cond (form next-state)
   (let* ((condition (car form))
@@ -414,6 +425,19 @@ This routine does not modify FORM."
 
 (cps--define-unsupported track-mouse)
 
+(defun cps--make-unwind-wrapper (unwind-forms)
+  (assert lexical-binding)
+  (lambda (form)
+    (let ((normal-exit-symbol
+           (gensym "cps-normal-exit-from-unwind-")))
+      `(let (,normal-exit-symbol)
+         (unwind-protect
+             (prog1
+                 ,form
+               (setf ,normal-exit-symbol t))
+           (unless ,normal-exit-symbol
+             ,unwind-forms))))))
+
 (defun cps--transform-unwind-protect (form next-state)
   ;; If we're inside an unwind-protect, we have a block of code
   ;; UNWINDFORMS which we would like to run whenever control flows
@@ -436,11 +460,9 @@ This routine does not modify FORM."
   ;; inside UNWINDFORMS.
   ;;
 
-  (cps--with-unwind-forms
-      ;; On the non-local path: unlike unwind-protect,
-      ;; cps--with-unwind-forms evaluates its unwind-forms only on the
-      ;; non-local path.
-      (cdr form)
+  (cps--with-value-wrapper
+      ;; On the non-local path
+      (cps--make-unwind-wrapper (cdr form))
 
     ;; On the local control flow path, we have BODYFORMS yield to the
     ;; "unwind" state, which leaves the current value forms alone ---
@@ -477,7 +499,9 @@ This routine does not modify FORM."
          (*cps-value-symbol* (gensym "cps-current-value-"))
          (*cps-state-symbol* (gensym "cps-current-state-"))
          (terminal-state (cps--add-state "terminal" nil))
-         (initial-state (cps--transform-1 form terminal-state)))
+         (initial-state (cps--transform-1
+                         (macroexpand-all form)
+                         terminal-state)))
 
     `(let ,(list* *cps-state-symbol* *cps-value-symbol* *cps-bindings*)
        ,@(loop for (state . body) in *cps-states*

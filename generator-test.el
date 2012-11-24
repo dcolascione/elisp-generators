@@ -87,9 +87,21 @@
      (setf *cps-test-i* 2))
    *cps-test-i*)
 
+  (cps-testcase
+   (catch 'mytag 42))
+
+  (cps-testcase
+   (1+ (catch 'mytag
+         (throw 'mytag (+ 2 2)))))
+
+  (cps-testcase
+   (loop for x from 1 to 10 collect x))
+
+  (cps-testcase
+   `(a b ,(loop for x from 1 to 10 collect x) -1))
+
   t)
 
 (cps-run-tests)
 
 ; (cps-run-tests)
-
