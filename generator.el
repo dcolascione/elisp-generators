@@ -1,14 +1,17 @@
+;; -*- lexical-binding: t -*-
 (eval-when-compile
   (require 'cl))
+
+(assert lexical-binding)
 
 (defvar *cps-bindings* nil)
 (defvar *cps-states* nil)
 (defvar *cps-value-symbol* nil)
 (defvar *cps-state-symbol* nil)
 
-(defvar *cps-dynamic-bindings* nil
-  "Alist of dynamic bindings in effect.
-The keys may be any form recognized by LETF.")
+(defvar *cps-dynamic-wrappers* '(identity)
+  "List of transformer functions to apply to atomic forms we
+evaluate in CPS context.")
 
 (defun cps--special-form-p (definition)
   "Non-nil if and only if DEFINITION is a special form."
@@ -21,11 +24,51 @@ The keys may be any form recognized by LETF.")
   `(defun ,(intern (format "cps--transform-%s" function))
      (error "%s not supported in generators" ,function)))
 
+(defmacro cps--with-value-wrapper (wrapper &rest body)
+  `(let ((*cps-dynamic-wrappers*
+          (cons
+           ,wrapper
+           *cps-dynamic-wrappers*)))
+     ,@body))
+(put 'cps--with-value-wrapper 'lisp-indent-function 1)
+
+(defun cps--make-dynamic-binding-wrapper (dynamic-var static-var)
+  (assert lexical-binding)
+  (lambda (form)
+    `(let ((,dynamic-var ,static-var))
+       (unwind-protect ; Update the static shadow after evaluation is done
+           ,form
+         (setf ,static-var ,dynamic-var))
+       ,form)))
+
 (defmacro cps--with-dynamic-binding (dynamic-var static-var &rest body)
-  `(let ((*cps-dynamic-bindings*
-          (cons (cons ,dynamic-var ,static-var) *cps-dynamic-bindings*)))
+  "Evaluate BODY such that generated atomic evaluations run with
+DYNAMIC-VAR bound to STATIC-VAR."
+  `(cps--with-value-wrapper
+       (cps--make-dynamic-binding-wrapper ,dynamic-var ,static-var)
      ,@body))
 (put 'cps--with-dynamic-binding 'lisp-indent-function 2)
+
+(defun cps--make-unwind-wrapper (unwind-forms)
+  (assert lexical-binding)
+  (lambda (form)
+    (let ((normal-exit-symbol
+           (gensym "cps-normal-exit-from-unwind")))
+      `(let (,normal-exit-symbol)
+         (unwind-protect
+             (prog1
+                 ,form
+               (setf ,normal-exit-symbol t))
+           (unless ,normal-exit-symbol
+             ,unwind-forms))))))
+
+(defmacro cps--with-unwind-forms (unwind-forms &rest body)
+  "Evaluate BODY such that generated atomic evaluations run
+UNWIND-FORMS on non-local exit."
+  `(cps--with-value-wrapper
+       (cps--make-unwind-wrapper ,unwind-forms)
+     ,@body))
+(put 'cps--with-unwind-forms 'lisp-indent-function 1)
 
 (defun cps--add-state (kind body)
   "Create a new CPS state with body BODY and return the state's name."
@@ -62,16 +105,13 @@ The keys may be any form recognized by LETF.")
       (cps--transform-atom form next-state)))))
 
 (defun cps--transform-atom (form next-state)
-  (when (loop for (dkey . dval) in *cps-dynamic-bindings*
-              thereis dkey)
-    (setf form `(let ,(loop for (dkey . dval) in *cps-dynamic-bindings*
-                            when dkey
-                            collect (list dkey dval))
-                  ,form)))
-
   (cps--add-state "atom"
    `(progn
-      (setf ,*cps-value-symbol* ,form)
+       (setf ,*cps-value-symbol*
+             ,(loop
+               for wrapper in *cps-dynamic-wrappers*
+               for tform = (funcall wrapper form) then (funcall wrapper tform)
+               finally return tform))
       (setf ,*cps-state-symbol* ,next-state))))
 
 (defun cps--transform-application (form next-state)
@@ -95,7 +135,7 @@ The keys may be any form recognized by LETF.")
          next-state)))))
 
 (defun cps--transform-and (form next-state)
-  (if (null form) ; (AND) -> t
+  (if (null form) ; (and) -> t
       (cps--transform-1 t next-state)
     (cps--transform-1
      (car form)
@@ -159,7 +199,7 @@ The keys may be any form recognized by LETF.")
 (defun cps--transform-inline (body next-state)
   (if (cdr body)
       ;; Evaluate FORM1, ignores its value, and goes on to evaluate
-      ;; REST as if it were a nested INLINE.
+      ;; REST as if it were a nested `inline'.
       (cps--transform-1
        (car body)
        (cps--transform-1 `(inline ,@(cdr body)) next-state))
@@ -168,7 +208,7 @@ The keys may be any form recognized by LETF.")
     (cps--transform-1 (car body) next-state)))
 
 (defun cps--transform-interactive (body next-state)
-  ;; When actually evaluated, INTERACTIVE always evaluates to NIL.
+  ;; When actually evaluated, `interactive' always evaluates to NIL.
   (cps--transform-1 nil next-state))
 
 (defun cps--replace-variable-references (var new-var form)
@@ -205,7 +245,7 @@ This routine does not modify FORM."
     (check-type var symbol)
 
     (if (null bindings)
-        ;; Base base: no bindings, so LET* becomes PROGN.
+        ;; Base base: no bindings, so `let*' becomes `progn'.
       (cps--transform-1 `(progn ,@(cdr form)) next-state)
 
       ;; Recurrence case: handle the first binding and recurse to
@@ -241,7 +281,7 @@ This routine does not modify FORM."
      ;; Recurrence case: (or TERM1 REST...) Evaluate TERM1 and send
      ;; its value to our new state.  There, if TERM1 evaluated to
      ;; non-nil, send its value to NEXT-STATE; otherwise, treat the
-     ;; remaining terms as a nested OR.
+     ;; remaining terms as a nested `or'.
      (cps--add-state "or"
       `(setf ,*cps-state-symbol*
              (if ,*cps-value-symbol*
@@ -284,7 +324,7 @@ This routine does not modify FORM."
 (defun cps--transform-progn (body next-state)
   (if (cdr body)
       ;; Evaluate FORM1, ignores its value, and goes on to evaluate
-      ;; REST as if it were a nested PROGN.
+      ;; REST as if it were a nested `progn'.
       (cps--transform-1
        (car body)
        (cps--transform-1 `(progn ,@(cdr body)) next-state))
@@ -318,6 +358,7 @@ This routine does not modify FORM."
   (set-mark (third info)))
 
 (defun cps--transform-save-excursion (form next-state)
+  (error "FIXME")
   (let ((saved-excursion-symbol (gensym "cps-saved-excursion-")))
     (cps--with-dynamic-binding nil 'save-excursion
       (cps--transform-1
@@ -350,6 +391,7 @@ This routine does not modify FORM."
 
 (defun cps--transform-save-restriction (form next-state)
   (let ((saved-restriction-symbol (gensym "cps-saved-restriction-")))
+    (error "FIXME")
     (cps--with-dynamic-binding nil 'save-restriction
       (cps--transform-1
        `(let* ((,saved-restriction-symbol (cps--save-restriction)))
@@ -371,7 +413,46 @@ This routine does not modify FORM."
       (setf ,*cps-state-symbol* ,next-state))))
 
 (cps--define-unsupported track-mouse)
-(cps--define-unsupported unwind-protect) ;; XXX?!
+
+(defun cps--transform-unwind-protect (form next-state)
+  ;; If we're inside an unwind-protect, we have a block of code
+  ;; UNWINDFORMS which we would like to run whenever control flows
+  ;; away from the main piece of code, BODYFORM.  We deal with the
+  ;; local control flow case by generating BODYFORM such that it
+  ;; yields to a continuation that executes UNWINDFORMS, which then
+  ;; yields to NEXT-STATE.
+  ;;
+  ;; Non-Local control flow is trickier: we need to ensure that we
+  ;; execute UNWINDFORMS even when control bypasses our normal
+  ;; continuation.  To make this guarantee, we wrap every external
+  ;; application (i.e., every piece of elisp that can transfer control
+  ;; non-locally) in an unwind-protect that runs UNWINDFORMS before
+  ;; allowing the non-local control transfer to proceed.
+  ;;
+  ;; Unfortunately, because elisp lacks a mechanism for generically
+  ;; capturing the reason for an arbitrary non-local control transfer
+  ;; and restarting the transfer at a later point, we cannot reify
+  ;; non-local transfers and cannot allow continuation-passing code
+  ;; inside UNWINDFORMS.
+  ;;
+
+  (cps--with-unwind-forms
+      ;; On the non-local path: unlike unwind-protect,
+      ;; cps--with-unwind-forms evaluates its unwind-forms only on the
+      ;; non-local path.
+      (cdr form)
+
+    ;; On the local control flow path, we have BODYFORMS yield to the
+    ;; "unwind" state, which leaves the current value forms alone ---
+    ;; we just run UNWINDFORMS as a monolithic block and throw away its
+    ;; value, resuming execution as if we weren't in `unwind-protect'
+    ;; at all.
+    (cps--transform-1
+     (car form)
+     (cps--add-state "unwind"
+       `(progn
+          ,@(cdr form)
+          (setf ,*cps-state-symbol* ,next-state))))))
 
 (defun cps--transform-while (form next-state)
   (let* ((loop-state
@@ -407,11 +488,7 @@ This routine does not modify FORM."
        ,*cps-value-symbol*)))
 
 (defmacro defgenerator (name arglist &rest body)
-  "Like DEFUN, except that BODY may contain YIELD."
+  "Like `defun', except that BODY may contain `yield'."
   )
 
 (provide 'generator)
-
-;; Local Variables:
-;; lexical-binding: t
-;; End:

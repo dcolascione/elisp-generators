@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t -*-
 (require 'generator)
 
 (defun list-subrs ()
@@ -79,10 +80,16 @@
   (cps-testcase
    (+ (+ 3 5) 1))
 
+  (cps-testcase
+   (setf *cps-test-i* 0)
+   (unwind-protect
+       (setf *cps-test-i* 1)
+     (setf *cps-test-i* 2))
+   *cps-test-i*)
+
   t)
 
 (cps-run-tests)
 
-;; Local Variables:
-;; lexical-binding: t
-;; End:
+; (cps-run-tests)
+
