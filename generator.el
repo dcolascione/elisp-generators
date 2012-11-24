@@ -181,14 +181,17 @@ DYNAMIC-VAR bound to STATIC-VAR."
      (cond ((null condition) nil)
            ((null condition-body)
             `(or ,predicate
-                 ,(cond ,@remaining-conditions)))
+                 (cond ,@remaining-conditions)))
            (t
             `(if ,predicate
                  (progn ,@condition-body)
-               ,(cond ,@remaining-conditions))))
+               (cond ,@remaining-conditions))))
      next-state)))
 
-(cps--define-unsupported condition-case) ; XXX
+(defun cps--transform-condition-case (form next-state)
+  ;; XXX
+  (error "not implemented"))
+
 (cps--define-unsupported defvar)
 (cps--define-unsupported defconst)
 
@@ -204,8 +207,8 @@ DYNAMIC-VAR bound to STATIC-VAR."
    (cps--add-state "if"
     `(setf ,*cps-state-symbol*
        (if ,*cps-value-symbol*
-           ,(cps--transform-1 (cadr form))
-         ,(cps-transform-1 `(progn ,@(cddr form))))))))
+           ,(cps--transform-1 (cadr form) next-state)
+         ,(cps--transform-1 `(progn ,@(cddr form)) next-state))))))
 
 (defun cps--transform-inline (body next-state)
   (if (cdr body)

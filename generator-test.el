@@ -100,6 +100,24 @@
   (cps-testcase
    `(a b ,(loop for x from 1 to 10 collect x) -1))
 
+  (cps-testcase
+   (if t 'abc))
+
+  (cps-testcase
+   (if t 'abc 'def))
+
+  (cps-testcase
+   (if nil 'abc 'def))
+
+  (cps-testcase
+   (cond))
+
+  (cps-testcase
+   (cond (42)))
+
+  (cps-testcase
+   (cond (nil 22) ((1+ 1) 42) (t 'bad)))
+
   t)
 
 (cps-run-tests)
