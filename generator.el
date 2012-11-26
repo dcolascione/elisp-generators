@@ -13,6 +13,12 @@
   "List of transformer functions to apply to atomic forms we
 evaluate in CPS context.")
 
+(defun cps--debug-funcall (func &rest args)
+  (message "XXX:%S: args=%S" func args)
+  (let ((result (apply func args)))
+    (message "XXX:%S: result=%S" func result)
+    result))
+
 (defun cps--special-form-p (definition)
   "Non-nil if and only if DEFINITION is a special form."
   ;; Copied from ad-special-form-p
@@ -86,12 +92,12 @@ DYNAMIC-VAR bound to STATIC-VAR."
 (defun cps--transform-atom (form next-state)
   (cps--add-state "atom"
    `(progn
-       (setf ,*cps-value-symbol*
-             ,(loop
-               for wrapper in *cps-dynamic-wrappers*
-               for tform = (funcall wrapper form) then (funcall wrapper tform)
-               finally return tform))
-      (setf ,*cps-state-symbol* ,next-state))))
+      (setf ,*cps-state-symbol* ,next-state)
+      (setf ,*cps-value-symbol*
+            ,(loop
+              for wrapper in *cps-dynamic-wrappers*
+              for tform = (funcall wrapper form) then (funcall wrapper tform)
+              finally return tform)))))
 
 (defun cps--transform-application (form next-state)
   (let* ((function (car form))
@@ -155,7 +161,7 @@ DYNAMIC-VAR bound to STATIC-VAR."
   (let ((tag-binding (cps--add-binding "catch-tag")))
     (cps--transform-1
      (car form)
-     (cps--add-state "catch-updater"
+     (cps--add-state "catch-tag-updater"
        `(setf ,tag-binding
               ,*cps-value-symbol*
               ,*cps-state-symbol*
@@ -188,9 +194,45 @@ DYNAMIC-VAR bound to STATIC-VAR."
                (cond ,@remaining-conditions))))
      next-state)))
 
+(defun cps--make-condition-wrapper (var next-state handlers)
+  ;; Each handler is both one of the transformers with which we wrap
+  ;; evaluated atomic forms and a state to which we jump when we
+  ;; encounter the given error.
+
+  (let* ((error-symbol (cps--add-binding "condition-case-error"))
+         (lexical-error-symbol (gensym "cps-lexical-error-"))
+         (processed-handlers
+          (loop for (condition . body) in handlers
+                collect (cons condition
+                              (cps--transform-1
+                               (cps--replace-variable-references
+                                var error-symbol
+                                `(progn ,@body))
+                               next-state)))))
+
+    (lambda (form)
+      `(condition-case
+           ,lexical-error-symbol
+           ,form
+         ,@(loop
+            for (condition . error-state) in processed-handlers
+            collect
+            `(,condition
+              (setf ,error-symbol
+                    ,lexical-error-symbol
+                    ,*cps-state-symbol*
+                    ,error-state)))))))
+
 (defun cps--transform-condition-case (form next-state)
-  ;; XXX
-  (error "not implemented"))
+  (let ((var (car form))
+        (bodyform (cadr form))
+        (handlers (cddr form)))
+
+    (cps--with-value-wrapper
+        (cps--make-condition-wrapper var next-state handlers)
+      (cps--transform-1
+       bodyform
+       next-state))))
 
 (cps--define-unsupported defvar)
 (cps--define-unsupported defconst)
@@ -198,8 +240,8 @@ DYNAMIC-VAR bound to STATIC-VAR."
 (defun cps--transform-function (form next-state)
   (cps--add-state "function"
    `(progn
-      (setf ,*cps-value-symbol* (function ,@form))
-      (setf ,*cps-state-symbol* ,next-state))))
+      (setf ,*cps-state-symbol* ,next-state)
+      (setf ,*cps-value-symbol* (function ,@form)))))
 
 (defun cps--transform-if (form next-state)
   (cps--transform-1
@@ -227,7 +269,8 @@ DYNAMIC-VAR bound to STATIC-VAR."
 
 (defun cps--replace-variable-references (var new-var form)
   "Replace all non-shadowed references to VAR with NEW-VAR in FORM.
-This routine does not modify FORM."
+This routine does not modify FORM, instead returning a modified
+copy."
   (macroexpand-all
    `(cl-symbol-macrolet ((,var ,new-var)) ,form)))
 
@@ -372,7 +415,7 @@ This routine does not modify FORM."
   (set-mark (third info)))
 
 (defun cps--transform-save-excursion (form next-state)
-  (error "FIXME")
+  (error "XXX FIXME")
   (let ((saved-excursion-symbol (gensym "cps-saved-excursion-")))
     (cps--with-dynamic-binding nil 'save-excursion
       (cps--transform-1
@@ -405,7 +448,7 @@ This routine does not modify FORM."
 
 (defun cps--transform-save-restriction (form next-state)
   (let ((saved-restriction-symbol (gensym "cps-saved-restriction-")))
-    (error "FIXME")
+    (error "XXX FIXME")
     (cps--with-dynamic-binding nil 'save-restriction
       (cps--transform-1
        `(let* ((,saved-restriction-symbol (cps--save-restriction)))
