@@ -91,13 +91,15 @@ DYNAMIC-VAR bound to STATIC-VAR."
 
 (defun cps--transform-atom (form next-state)
   (cps--add-state "atom"
-   `(progn
-      (setf ,*cps-state-symbol* ,next-state)
-      (setf ,*cps-value-symbol*
-            ,(loop
-              for wrapper in *cps-dynamic-wrappers*
-              for tform = (funcall wrapper form) then (funcall wrapper tform)
-              finally return tform)))))
+    `(setf ,*cps-value-symbol*
+           ,(loop
+             for wrapper in *cps-dynamic-wrappers*
+             for tform =
+             (funcall wrapper `(prog1 ,form
+                                 (setf ,*cps-state-symbol* ,next-state)))
+             then
+             (funcall wrapper tform)
+             finally return tform))))
 
 (defun cps--transform-application (form next-state)
   (let* ((function (car form))
@@ -559,6 +561,10 @@ copy."
 
 (defmacro defgenerator (name arglist &rest body)
   "Like `defun', except that BODY may contain `yield'."
-  )
+
+  ;; XXX not done
+
+  `(defun ,name ,arglist
+     ,(cps-generate-evaluator `(progn ,@body))))
 
 (provide 'generator)
