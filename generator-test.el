@@ -48,7 +48,17 @@ identical output.
 (cps-testcase cps-or-empty (or))
 
 (cps-testcase cps-let* (let* ((i 10)) i))
+(cps-testcase cps-let*-shadow-empty (let* ((i 10)) (let (i) i)))
 (cps-testcase cps-let (let ((i 10)) i))
+(cps-testcase cps-let-shadow-empty (let ((i 10)) (let (i) i)))
+(cps-testcase cps-let-novars (let nil 42))
+(cps-testcase cps-let*-novars (let* nil 42))
+
+(cps-testcase cps-let-parallel
+  (let ((a 5) (b 6)) (let ((a b) (b a)) (list a b))))
+
+(cps-testcase cps-let*-parallel
+  (let* ((a 5) (b 6)) (let* ((a b) (b a)) (list a b))))
 
 (cps-testcase cps-while-dynamic
   (setq *cps-test-i* 0)
