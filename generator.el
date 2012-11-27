@@ -118,6 +118,14 @@ DYNAMIC-VAR bound to STATIC-VAR."
             ,(cons function argument-symbols))
          next-state)))))
 
+(defun cps--transform-cps-internal-yield (form next-state)
+  (cps--transform-1
+   (car form)
+   (cps--add-state "yield"
+     `(progn
+        (setf ,*cps-state-symbol* ,next-state)
+        (throw 'cps-yield ,*cps-value-symbol*)))))
+
 (defun cps--transform-and (form next-state)
   (if (null form) ; (and) -> t
       (cps--transform-1 t next-state)
@@ -538,12 +546,15 @@ copy."
     (push loop-state *cps-bindings*)
     eval-loop-condition-state))
 
+(put 'generator-ended 'error-conditions '(generator-ended))
+
 (defun cps-generate-evaluator (form)
   (let* (*cps-states*
          *cps-bindings*
          (*cps-value-symbol* (gensym "cps-current-value-"))
          (*cps-state-symbol* (gensym "cps-current-state-"))
-         (terminal-state (cps--add-state "terminal" nil))
+         (terminal-state (cps--add-state "terminal"
+                           '(signal 'generator-ended t)))
          (initial-state (cps--transform-1
                          (macroexpand-all form)
                          terminal-state)))
@@ -552,14 +563,36 @@ copy."
        ,@(loop for (state . body) in *cps-states*
                collect `(setf ,state (lambda () ,body)))
        (setf ,*cps-state-symbol* ,initial-state)
-       (while (not (eq ,*cps-state-symbol* ,terminal-state))
-         (funcall ,*cps-state-symbol*))
-       ,*cps-value-symbol*)))
+       (lambda ()
+         (catch 'cps-yield
+           (while t
+             (funcall ,*cps-state-symbol*)))))))
+
+(defmacro yield (value)
+  (error "`yield' used outside a generator"))
 
 (defmacro defgenerator (name arglist &rest body)
-  "Like `defun', except that BODY may contain `yield'."
+  "Creates a generator NAME.
+
+When called as a function, NAME returns a closure that
+encapsulates the state of a computation.  When a form in BODY
+calls `yield' with a value, this closure returns that value.
+Calling the closure again resumes computation from the point
+after the call to `yield'. "
 
   `(defun ,name ,arglist
-     ,(cps-generate-evaluator `(progn ,@body))))
+     ,(cps-generate-evaluator
+       `(macrolet ((yield (value) `(cps-internal-yield ,value)))
+          ,@body))))
+
+(defmacro lambda-generator (arglist &rest body)
+  "Return a lambda generator.
+
+lambda-generator is to defgenerator as lambda is to defun."
+
+  `(lambda ,arglist
+     ,(cps-generate-evaluator
+       `(macrolet ((yield (value) `(cps-internal-yield ,value)))
+          ,@body))))
 
 (provide 'generator)

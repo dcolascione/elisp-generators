@@ -8,20 +8,21 @@
                   (cps--special-form-p (symbol-function x)))
         collect x))
 
-(defvar *generator-test-last-body* nil)
-(defun cps-testcase-1 (body)
-  (let ((lexical-binding t))
-    (setf *generator-test-last-body* (cps-generate-evaluator body))
-    (let ((expected-result (eval body))
-          (actual-result (eval *generator-test-last-body*)))
-      (unless (equal expected-result actual-result)
-        (error "CPS failure: got %S expected %S in %S"
-               actual-result expected-result body))
-      actual-result)))
-
 (defmacro cps-testcase (name &rest body)
+  "Perform a simple test of the continuation-transforming code.
+
+`cps-testcase' defines an ERT testcase called NAME that evaluates
+BODY twice: once using ordinary `eval' and once using
+lambda-generators.  The test ensures that the two forms produce
+identical output.
+"
   `(ert-deftest ,name ()
-       (cps-testcase-1 '(progn ,@body))))
+       (should
+        (equal
+         (funcall (lambda () ,@body))
+         (funcall
+          (funcall
+           (lambda-generator () (yield (progn ,@body)))))))))
 
 (put 'cps-testcase 'lisp-indent-function 1)
 
