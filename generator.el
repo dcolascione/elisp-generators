@@ -1,4 +1,5 @@
 ;; -*- lexical-binding: t -*-
+(require 'cl-lib)
 (eval-when-compile
   (require 'cl))
 
@@ -14,7 +15,7 @@
 evaluate in CPS context.")
 
 (defconst cps-standard-special-forms
-  '(setq setq-default throw interactive function quote)
+  '(setq setq-default throw interactive)
   "List of special forms that we treat just like ordinary
   function applications." )
 
@@ -62,14 +63,14 @@ DYNAMIC-VAR bound to STATIC-VAR."
 
 (defun cps--add-state (kind body)
   "Create a new CPS state with body BODY and return the state's name."
-  (let* ((state (gensym (format "cps-state-%s-" kind))))
+  (let* ((state (cl-gensym (format "cps-state-%s-" kind))))
     (push (cons state body) *cps-states*)
     (push state *cps-bindings*)
     state))
 (put 'cps--add-state 'lisp-indent-function 1)
 
 (defun cps--add-binding (original-name)
-  (car (push (gensym (format "cps-binding-%s-" original-name))
+  (car (push (cl-gensym (format "cps-binding-%s-" original-name))
              *cps-bindings*)))
 
 (defun cps--find-special-form-handler (form)
@@ -294,7 +295,7 @@ DYNAMIC-VAR bound to STATIC-VAR."
      ;; need our states to be self-referential. (That's what makes the
      ;; state a loop.)
      (let* ((loop-state
-             (gensym "cps-state-while-"))
+             (cl-gensym "cps-state-while-"))
             (eval-loop-condition-state
              (cps--transform-1 test loop-state))
             (loop-state-body
@@ -308,6 +309,15 @@ DYNAMIC-VAR bound to STATIC-VAR."
        (push (cons loop-state loop-state-body) *cps-states*)
        (push loop-state *cps-bindings*)
        eval-loop-condition-state))
+
+    ;; Process various kinds of `quote'.
+
+    (`(quote ,arg) (cps--add-state "quote"
+                     `(setf ,*cps-value-symbol* (quote ,arg)
+                            ,*cps-state-symbol* ,next-state)))
+    (`(function ,arg) (cps--add-state "function"
+                        `(setf ,*cps-value-symbol* (function ,arg)
+                               ,*cps-state-symbol* ,next-state)))
 
     ;; Deal with `yield'.
 
@@ -330,14 +340,14 @@ DYNAMIC-VAR bound to STATIC-VAR."
     ;; parameters, converting them to applications of trivial
     ;; let-bound parameters.
 
-    ((and `(,function . arguments)
+    ((and `(,function . ,arguments)
           (guard (not (loop for argument in arguments
                             always (atom argument)))))
      (let ((argument-symbols
             (loop for argument in arguments
                   collect (if (atom argument)
                               argument
-                            (gensym "cps-argument-")))))
+                            (cl-gensym "cps-argument-")))))
 
        (cps--transform-1
         `(let* ,(loop for argument in arguments
@@ -359,7 +369,7 @@ DYNAMIC-VAR bound to STATIC-VAR."
 (defun cps--make-catch-wrapper (tag-binding next-state)
   (lambda (form)
     (let ((normal-exit-symbol
-           (gensym "cps-normal-exit-from-catch-")))
+           (cl-gensym "cps-normal-exit-from-catch-")))
       `(let (,normal-exit-symbol)
          (prog1
              (catch ,tag-binding
@@ -375,7 +385,7 @@ DYNAMIC-VAR bound to STATIC-VAR."
   ;; encounter the given error.
 
   (let* ((error-symbol (cps--add-binding "condition-case-error"))
-         (lexical-error-symbol (gensym "cps-lexical-error-"))
+         (lexical-error-symbol (cl-gensym "cps-lexical-error-"))
          (processed-handlers
           (loop for (condition . body) in handlers
                 collect (cons condition
@@ -409,7 +419,7 @@ copy."
   (assert lexical-binding)
   (lambda (form)
     (let ((normal-exit-symbol
-           (gensym "cps-normal-exit-from-unwind-")))
+           (cl-gensym "cps-normal-exit-from-unwind-")))
       `(let (,normal-exit-symbol)
          (unwind-protect
              (prog1
@@ -423,8 +433,8 @@ copy."
 (defun cps-generate-evaluator (form)
   (let* (*cps-states*
          *cps-bindings*
-         (*cps-value-symbol* (gensym "cps-current-value-"))
-         (*cps-state-symbol* (gensym "cps-current-state-"))
+         (*cps-value-symbol* (cl-gensym "cps-current-value-"))
+         (*cps-state-symbol* (cl-gensym "cps-current-state-"))
          (terminal-state (cps--add-state "terminal"
                            '(signal 'generator-ended t)))
          (initial-state (cps--transform-1
