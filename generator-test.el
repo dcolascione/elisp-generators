@@ -139,3 +139,23 @@ identical output.
       condvar
       42
     (cps-test-condition condvar)))
+
+(ert-deftest generator-basic ()
+  (let* ((gen (lambda-generator ()
+                (yield 1)
+                (yield 2)
+                (yield 3)))
+         (gen-inst (funcall gen)))
+    (should (eql (funcall gen-inst) 1))
+    (should (eql (funcall gen-inst) 2))
+    (should (eql (funcall gen-inst) 3))
+
+    ;; should-error doesn't seem to catch the generator-end case, so
+    ;; we write our own.
+
+    (let (errored)
+      (condition-case nil
+          (funcall gen-inst)
+        (generator-ended
+         (setf errored t)))
+      (should errored))))

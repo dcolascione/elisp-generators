@@ -467,6 +467,8 @@ after the call to `yield'. "
        `(macrolet ((yield (value) `(cps-internal-yield ,value)))
           ,@body))))
 
+(put 'defgenerator 'lisp-indent-function 'defun)
+
 (defmacro lambda-generator (arglist &rest body)
   "Return a lambda generator.
 
@@ -476,5 +478,7 @@ lambda-generator is to defgenerator as lambda is to defun."
      ,(cps-generate-evaluator
        `(macrolet ((yield (value) `(cps-internal-yield ,value)))
           ,@body))))
+
+(put 'lambda-generator 'lisp-indent-function 'defun)
 
 (provide 'generator)
