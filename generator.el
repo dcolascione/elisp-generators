@@ -462,6 +462,8 @@ calls `yield' with a value, this closure returns that value.
 Calling the closure again resumes computation from the point
 after the call to `yield'. "
 
+  (cl-assert lexical-binding)
+
   `(defun ,name ,arglist
      ,(cps-generate-evaluator
        `(macrolet ((yield (value) `(cps-internal-yield ,value)))
@@ -473,6 +475,8 @@ after the call to `yield'. "
   "Return a lambda generator.
 
 lambda-generator is to defgenerator as lambda is to defun."
+
+  (cl-assert lexical-binding)
 
   `(lambda ,arglist
      ,(cps-generate-evaluator
