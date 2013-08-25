@@ -1,4 +1,12 @@
 ;; -*- lexical-binding: t -*-
+;; Copyright (C) Daniel Colascione
+
+;; Author: Daniel Colascione <dancol@dancol.org>
+;; Keywords: elisp
+
+;; This file is not part of GNU Emacs.
+;; This file is free software covered under the GPLv3.
+
 (require 'cl-lib)
 (eval-when-compile
   (require 'cl))
@@ -37,6 +45,17 @@ evaluate in CPS context.")
      (error "%s not supported in generators" ,function)))
 
 (defmacro cps--with-value-wrapper (wrapper &rest body)
+  "Continue generating CPS code with an atomic-form wrapper
+to the current stack of such wrappers.  WRAPPER is a function that
+takes a form and returns a wrapped form.
+
+Whenever we generate an atomic form (i.e., a form that can't
+yield), we first (before actually inserting that form in our
+generated code) pass that form through all the transformer
+functions.  We use this facility to wrap forms that can transfer
+control flow non-locally in goo that diverts this control flow to
+the CPS state machinery.
+"
   `(let ((*cps-dynamic-wrappers*
           (cons
            ,wrapper
@@ -258,7 +277,7 @@ DYNAMIC-VAR bound to STATIC-VAR."
     ;; generating BODYFORM such that it yields to a continuation that
     ;; executes UNWINDFORMS, which then yields to NEXT-STATE.
     ;;
-    ;; Non-Local control flow is trickier: we need to ensure that we
+    ;; Non-local control flow is trickier: we need to ensure that we
     ;; execute UNWINDFORMS even when control bypasses our normal
     ;; continuation.  To make this guarantee, we wrap every external
     ;; application (i.e., every piece of elisp that can transfer
@@ -334,6 +353,7 @@ DYNAMIC-VAR bound to STATIC-VAR."
     ((and `(,name . ,_)
           (guard (cps--special-form-p name))
           (guard (not (memq name cps-standard-special-forms))))
+     name ; Shut up byte compiler
      (error "special form %S incorrect or not supported" form))
 
     ;; Process regular function applications with nontrivial
@@ -445,12 +465,13 @@ copy."
        ,@(loop for (state . body) in *cps-states*
                collect `(setf ,state (lambda () ,body)))
        (setf ,*cps-state-symbol* ,initial-state)
-       (lambda ()
+       (lambda (yield-return)
+         (setf ,*cps-value-symbol* yield-return)
          (catch 'cps-yield
            (while t
              (funcall ,*cps-state-symbol*)))))))
 
-(defmacro yield (value)
+(defmacro yield (_value)
   (error "`yield' used outside a generator"))
 
 (defmacro defgenerator (name arglist &rest body)
@@ -484,5 +505,80 @@ lambda-generator is to defgenerator as lambda is to defun."
           ,@body))))
 
 (put 'lambda-generator 'lisp-indent-function 'defun)
+
+(defun next (iterator &optional yield-result)
+  "Extract a value from an iterator.
+YIELD-RESULT becomes the return value of `yield` in the
+context of the generator.
+
+This routine raises the generator-ended condition if the iterator
+cannot supply more values.
+
+"
+
+  (funcall iterator yield-result))
+
+(defmacro* do-iterator ((var iterator &optional result) &rest body)
+  "Loop over values from an iterator.
+Evaluate BODY with VAR bound to each value from ITERATOR.  Then
+evaluate RESULT to get return value, default nil."
+  (let ((done-symbol (cl-gensym "iterator-done"))
+        (it-symbol (cl-gensym "iterator")))
+    `(let (,var
+           (,done-symbol nil)
+           (,it-symbol ,iterator))
+       (while (not ,done-symbol)
+         (condition-case nil
+             (setf ,var (next ,it-symbol))
+           (generator-ended
+            (setf ,done-symbol t)))
+         (unless ,done-symbol ,@body))
+       ,result)))
+
+(put 'do-iterator 'lisp-indent-function 1)
+
+(defvar cl--loop-args)
+
+(defmacro cps--advance-for (conscell)
+  ;; See cps--handle-loop-for
+  `(condition-case nil
+       (progn
+         (setcar ,conscell (next (cdr ,conscell)))
+         ,conscell)
+     (generator-ended
+      nil)))
+
+(defmacro cps--initialize-for (iterator)
+  ;; See cps--handle-loop-for
+  (let ((cs (cl-gensym "cps--loop-temp")))
+    `(let ((,cs (cons nil ,iterator)))
+       (cps--advance-for ,cs))))
+
+(defun cps--handle-loop-for (var)
+  "Support `iterating' in `loop'.  "
+
+  ;; N.B. While the cl-loop-for-handler is a documented interface,
+  ;; there's no documented way for cl-loop-for-handler callbacks to do
+  ;; anything useful!  Additionally, cl-loop currently lexbinds useful
+  ;; internal variables, so our only option is to modify
+  ;; cl--loop-args.  If we substitute a general-purpose for-clause for
+  ;; our iterating clause, however, we can't preserve the
+  ;; parallel-versus-sequential `loop' semantics for for clauses ---
+  ;; we need a terminating condition as well, which requires us to use
+  ;; while, and inserting a while would break and-sequencing.
+  ;;
+  ;; To work around this problem, we actually use the "for var in LIST
+  ;; by FUNCTION" syntax, creating a new fake list each time through
+  ;; the loop, this "list" being a cons cell (val . it).
+
+  (let ((it-form (pop cl--loop-args)))
+    (setf cl--loop-args
+          (append
+           `(for ,var
+                 in (cps--initialize-for ,it-form)
+                 by 'cps--advance-for)
+           cl--loop-args))))
+
+(put 'iterating 'cl-loop-for-handler 'cps--handle-loop-for)
 
 (provide 'generator)

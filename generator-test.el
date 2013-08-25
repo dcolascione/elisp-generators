@@ -1,4 +1,12 @@
 ;; -*- lexical-binding: t -*-
+;; Copyright (C) Daniel Colascione
+
+;; Author: Daniel Colascione <dancol@dancol.org>
+;; Keywords: elisp
+
+;; This file is not part of GNU Emacs.
+;; This file is free software covered under the GPLv3.
+
 (require 'generator)
 (require 'ert)
 
@@ -20,7 +28,7 @@ identical output.
        (should
         (equal
          (funcall (lambda () ,@body))
-         (funcall
+         (next
           (funcall
            (lambda-generator () (yield (progn ,@body)))))))))
 
@@ -140,22 +148,50 @@ identical output.
       42
     (cps-test-condition condvar)))
 
-(ert-deftest generator-basic ()
+(ert-deftest cps-generator-basic ()
   (let* ((gen (lambda-generator ()
                 (yield 1)
                 (yield 2)
                 (yield 3)))
          (gen-inst (funcall gen)))
-    (should (eql (funcall gen-inst) 1))
-    (should (eql (funcall gen-inst) 2))
-    (should (eql (funcall gen-inst) 3))
+    (should (eql (next gen-inst) 1))
+    (should (eql (next gen-inst) 2))
+    (should (eql (next gen-inst) 3))
 
     ;; should-error doesn't seem to catch the generator-end case, so
     ;; we write our own.
 
     (let (errored)
       (condition-case nil
-          (funcall gen-inst)
+          (next gen-inst)
         (generator-ended
          (setf errored t)))
       (should errored))))
+
+(defgenerator mygenerator (i)
+  (yield 1)
+  (yield i)
+  (yield 2))
+
+(ert-deftest cps-test-do-iterator ()
+  (let (mylist)
+    (do-iterator (x (mygenerator 4))
+      (push x mylist))
+
+    (assert (equal mylist '(2 4 1)))))
+
+(defgenerator gen-using-yield-value ()
+  (let (f)
+    (setf f (yield 42))
+    (yield f)))
+
+(ert-deftest cps-yield-value ()
+  (let ((it (gen-using-yield-value)))
+    (should (eql (next it -1) 42))
+    (should (eql (next it -1) -1))))
+
+(ert-deftest cps-loop ()
+  (should
+   (equal (loop for x iterating (mygenerator 42)
+                collect x)
+          '(1 42 2))))
