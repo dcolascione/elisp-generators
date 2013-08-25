@@ -16,7 +16,7 @@ the returned iterator.
 
 A program extracts values from an iterator by passing the iterator to
 the `next` function.  When an iterator can generate no more values,
-`next` raises the generator-ended condition, which callers must handle
+`next` raises the stop-iteration condition, which callers must handle
 using condition-case if not using a higher-level iteration construct.
 `next` accepts a single argument that defaults to nil.  This argument
 becomes the value to which `yield` evaluates in the context of the
@@ -80,7 +80,7 @@ Simple usage
       (assert (eql (next it) 2))
       (assert (eq (condition-case nil
                       (next it)
-                    (generator-ended 'foo))
+                    (stop-iteration 'foo))
                   'foo)))
 
 Convenience facilities

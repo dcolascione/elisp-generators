@@ -1,11 +1,31 @@
 ;; -*- lexical-binding: t -*-
+;;; generator.el --- Provide generators to elisp
+
 ;; Copyright (C) Daniel Colascione
 
 ;; Author: Daniel Colascione <dancol@dancol.org>
 ;; Keywords: elisp
 
-;; This file is not part of GNU Emacs.
-;; This file is free software covered under the GPLv3.
+;; This file is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation; either version 3, or (at your option)
+;; any later version.
+
+;; This file is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with GNU Emacs; see the file COPYING.  If not, write to
+;; the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+;; Boston, MA 02110-1301, USA.
+
+;;; Commentary:
+
+;; See README.md.
+
+;;; Code:
 
 (require 'cl-lib)
 (eval-when-compile
@@ -448,7 +468,7 @@ copy."
            (unless ,normal-exit-symbol
              ,unwind-forms))))))
 
-(put 'generator-ended 'error-conditions '(generator-ended))
+(put 'stop-iteration 'error-conditions '(stop-iteration))
 
 (defun cps-generate-evaluator (form)
   (let* (*cps-states*
@@ -456,7 +476,7 @@ copy."
          (*cps-value-symbol* (cl-gensym "cps-current-value-"))
          (*cps-state-symbol* (cl-gensym "cps-current-state-"))
          (terminal-state (cps--add-state "terminal"
-                           '(signal 'generator-ended t)))
+                           '(signal 'stop-iteration t)))
          (initial-state (cps--transform-1
                          (macroexpand-all form)
                          terminal-state)))
@@ -511,7 +531,7 @@ lambda-generator is to defgenerator as lambda is to defun."
 YIELD-RESULT becomes the return value of `yield` in the
 context of the generator.
 
-This routine raises the generator-ended condition if the iterator
+This routine raises the stop-iteration condition if the iterator
 cannot supply more values.
 
 "
@@ -530,7 +550,7 @@ evaluate RESULT to get return value, default nil."
        (while (not ,done-symbol)
          (condition-case nil
              (setf ,var (next ,it-symbol))
-           (generator-ended
+           (stop-iteration
             (setf ,done-symbol t)))
          (unless ,done-symbol ,@body))
        ,result)))
@@ -545,7 +565,7 @@ evaluate RESULT to get return value, default nil."
        (progn
          (setcar ,conscell (next (cdr ,conscell)))
          ,conscell)
-     (generator-ended
+     (stop-iteration
       nil)))
 
 (defmacro cps--initialize-for (iterator)
@@ -582,3 +602,5 @@ evaluate RESULT to get return value, default nil."
 (put 'iterating 'cl-loop-for-handler 'cps--handle-loop-for)
 
 (provide 'generator)
+
+;;; generator.el ends here
