@@ -74,18 +74,17 @@ Simple usage
       (yield i)
       (yield 2))
 
-    (let (mylist)
-      (do-iterator (x (mygenerator 4))
-        (push x mylist))
+    (let ((it (mygenerator 42)))
+      (assert (eql (next it) 1))
+      (assert (eql (next it) 42))
+      (assert (eql (next it) 2))
+      (assert (eq (condition-case nil
+                      (next it)
+                    (generator-ended 'foo))
+                  'foo)))
 
-      (assert (equal mylist '(2 4 1))))
-
-    (assert (equal (loop for x iterating (mygenerator 42)
-                         collect x)
-                   '(1 42 2)))
-
-Using iterators
----------------
+Convenience facilities
+----------------------
 
 It would be inconvenient to write `next` and `condition-case` in every
 context in which one might want to extract values from an iterator.
@@ -97,8 +96,19 @@ to work with iterators.
 `do-iterator` works like `dolist`, except that it takes values from an
 iterator, not a list.
 
+    (let (mylist)
+      (do-iterator (x (mygenerator 4))
+        (push x mylist))
+
+      (assert (equal mylist '(2 4 1))))
+
+
 ### loop / cl-loop ###
 
 This package also extends `loop` with a new iteration keyword,
 `iterating`, that causes `loop` to draw values from an iterator.  This
 keyword works the same way that `on` and `across` do.
+
+    (assert (equal (loop for x iterating (mygenerator 42)
+                         collect x)
+                   '(1 42 2)))
