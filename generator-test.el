@@ -44,13 +44,22 @@ BODY twice: once using ordinary `eval' and once using
 lambda-generators.  The test ensures that the two forms produce
 identical output.
 "
-  `(ert-deftest ,name ()
+  `(progn
+     (ert-deftest ,name ()
        (should
         (equal
          (funcall (lambda () ,@body))
          (next
           (funcall
-           (lambda-generator () (yield (progn ,@body)))))))))
+           (lambda-generator () (yield (progn ,@body))))))))
+     (ert-deftest ,(intern (format "%s-noopt" name)) ()
+       (should
+        (equal
+         (funcall (lambda () ,@body))
+         (next
+          (funcall
+           (let ((cps-disable-atomic-optimization t))
+             (lambda-generator () (yield (progn ,@body)))))))))))
 
 (put 'cps-testcase 'lisp-indent-function 1)
 

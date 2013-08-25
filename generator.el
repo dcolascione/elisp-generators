@@ -117,8 +117,37 @@ DYNAMIC-VAR bound to STATIC-VAR."
          (handler (intern-soft handler-name)))
     (and (fboundp handler) handler)))
 
+(defvar cps-disable-atomic-optimization nil
+  "When t, always rewrite forms into cps even when they
+don't yield.")
+
+(defvar cps--yield-seen)
+
+(defun cps--atomic-p (form)
+  "Return whether the given form never yields."
+
+  (and (not cps-disable-atomic-optimization)
+       (let* ((cps--yield-seen)
+              (foo (macroexpand-all
+                    `(macrolet ((cps-internal-yield
+                                 (_val)
+                                 (setf cps--yield-seen t)))
+                       ,form))))
+         (not cps--yield-seen))))
+
 (defun cps--transform-1 (form next-state)
   (pcase form
+
+    ;; If we're looking at an "atomic" form (i.e., one that does not
+    ;; yield), just evaluate the form as a whole instead of rewriting
+    ;; it into CPS.
+
+    ((guard (cps--atomic-p form))
+     (let ((tform `(prog1 ,form (setf ,*cps-state-symbol* ,next-state))))
+       (loop for wrapper in *cps-dynamic-wrappers*
+             do (setf tform (funcall wrapper tform)))
+       (cps--add-state "atom"
+         `(setf ,*cps-value-symbol* ,tform))))
 
     ;; Process `and'.
 
