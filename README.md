@@ -1,3 +1,9 @@
+GENERATORS NOW IN CORE
+======================
+
+This package has been superseded by Emacs core support for generators
+in 25.1.
+
 elisp-generators
 ================
 
